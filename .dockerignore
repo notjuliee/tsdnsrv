@@ -1,0 +1,34 @@
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+
+# Binaries and caches
+/tsdnsrv
+/.gocache
+/.gomodcache
+/bin/
+/build/
+
+# Version control
+.git
+.gitignore
+
+# IDE/editor configs
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Docs and test data not needed for build
+/docs/
+/examples/

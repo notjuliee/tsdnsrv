@@ -1,0 +1,18 @@
+services:
+  tsdnsrv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        GO_VERSION: ${GO_VERSION:-1.25.1}
+    image: tsdnsrv:local
+    container_name: tsdnsrv
+    restart: unless-stopped
+    cap_add:
+      - NET_BIND_SERVICE
+    volumes:
+      - ./examples/compose:/config:ro
+      - tsdnsrv-state:/state
+    command: ["--config=/config/server.json"]
+volumes:
+  tsdnsrv-state:

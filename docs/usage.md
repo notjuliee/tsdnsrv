@@ -72,6 +72,33 @@ Key behaviors:
 - Logs emit to stderr in `slog` text format. Adjust verbosity via `logLevel` in the config.
 - Use `Ctrl+C`, `SIGINT`, or `SIGTERM` to shut the server down cleanly.
 
+## Container Image
+Build the multi-stage image defined in the repository root:
+```bash
+docker build -t tsdnsrv .
+```
+
+At runtime the container looks for a config file at `/config/server.json` by default. Mount your configuration and mapping files into that directory and publish UDP/TCP port 53:
+```bash
+docker run --rm \
+  --cap-add=NET_BIND_SERVICE \
+  -v $(pwd)/examples:/config:ro \
+  -p 53:53/udp -p 53:53/tcp \
+  tsdnsrv
+```
+
+Notes:
+- Binding to port 53 requires root privileges or the `NET_BIND_SERVICE` capability inside the container. The image runs as root by default so you only need the capability flag when dropping privileges with `--user`.
+- Override the config path by appending custom arguments to the command, for example `docker run ... tsdnsrv --config=/config/custom.json`.
+
+## Docker Compose
+An example compose definition (`docker-compose.yml`) builds the image and mounts sample configuration located in `examples/compose/`:
+```bash
+docker compose up --build
+```
+
+The compose file leaves port 53 unpublished on the host so the service remains reachable only through its Tailnet interface once tsnet wiring is added. It grants the `NET_BIND_SERVICE` capability and mounts a named volume at `/state` for tsnet data. Replace or edit the files in `examples/compose/` to point at your own mapping and configuration.
+
 ## Reload Records
 Send `SIGHUP` to the process to reload the mapping file without a restart:
 ```bash
