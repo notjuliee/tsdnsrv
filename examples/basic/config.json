@@ -1,7 +1,6 @@
 {
-  "hostname": "tsdnsrv-compose",
-  "authKey": "",
-  "stateDir": "/state",
+  "hostname": "tsdnsrv-sample",
+  "stateDir": "./state",
   "mapFile": "./hosts.txt",
   "listenAddress": ":53",
   "logLevel": "info",

@@ -1,0 +1,101 @@
+# tsdnsrv
+
+Tailnet-scoped DNS responder built with Go, Tailscale's `tsnet`, and `github.com/miekg/dns`. The service joins your Tailnet as a headless node and serves A/AAAA records from a static mapping file.
+
+## What You Get
+- Joins a Tailnet using `tsnet.Server` with auth key or interactive login flows.
+- Listens on UDP/TCP port 53 inside the Tailnet (no host-level root needed).
+- Answers case-insensitive A/AAAA queries with per-record TTLs.
+- Reloads the mapping file on `SIGHUP` without dropping active listeners.
+- Ships with Dockerfile and Compose recipe for containerized runs.
+
+## Quick Start
+1. Build the binary:
+   ```bash
+   go build -o tsdnsrv ./
+   ```
+2. Copy the sample config and mapping files: `cp -R examples/basic my-config`.
+3. Edit `my-config/config.json` to set your hostname, auth key (if any), and mapping file path.
+4. Run the server:
+   ```bash
+   ./tsdnsrv --config my-config/config.json
+   ```
+5. Complete the interactive login from the logs (if no auth key supplied) and point Tailnet clients at the server's Tailscale IP.
+
+Use `kill -HUP <pid>` to reload records after editing the mapping file.
+
+## Configuration Reference
+Configuration is supplied via JSON; relative paths resolve against the config file location.
+
+```json
+{
+  "hostname": "tsdnsrv-sample",
+  "authKey": "tskey-...",
+  "stateDir": "./state",
+  "mapFile": "./hosts.txt",
+  "listenAddress": ":53",
+  "logLevel": "info",
+  "controlURL": "",
+  "ephemeral": false
+}
+```
+
+- `hostname` (required): Node name that appears in the Tailnet.
+- `authKey`: Optional Tailnet auth key. Supply an ephemeral-scoped key when `ephemeral` is `true`; omit to get an interactive login URL.
+- `stateDir`: Directory for persistent tsnet state. Ignored when `ephemeral` is `true`. Relative paths refer to the config's directory.
+- `mapFile` (required): Path to the mapping file that defines DNS responses.
+- `listenAddress`: Port (and optionally IP) to request from tsnet. The resolved Tailnet IP is chosen automatically when the host is omitted.
+- `logLevel`: One of `debug`, `info`, `warn`, or `error` (aliases like `warning` normalize to `warn`).
+- `controlURL`: Custom control plane URL for non-default Tailnets.
+- `ephemeral`: Set to `true` only when using ephemeral auth keys; state is not persisted for ephemeral nodes.
+
+## Mapping File Format
+Each non-empty, non-comment line declares a record:
+```
+<hostname> <ip-address> [ttl-seconds]
+```
+- Hostnames are treated as FQDNs; a trailing dot is optional.
+- IPv4 and IPv6 addresses are supported in any mix.
+- TTL defaults to 300 seconds when omitted.
+
+Example (`examples/basic/hosts.txt`):
+```
+# Example hostname -> IP mapping used by tsdnsrv
+web.internal 100.100.100.10 120
+app.internal 100.100.100.20
+ipv6.internal fd7a:115c:a1e0:ab12:4843:cd96:6271:1234
+```
+
+## Examples & Tooling
+- `examples/basic/config.json` – baseline configuration wired to the companion `hosts.txt` file. Copy the folder to keep samples intact.
+- `examples/basic/hosts.txt` – minimal record set covering IPv4, IPv6, and TTL overrides.
+- `docker-compose.yml` – builds the image locally and runs the server with the example config mounted at `/config`. The compose file mounts a named volume at `/config/state` so the sample `stateDir` works read-only.
+- `Dockerfile` – multi-stage build producing a minimal distroless image.
+
+Run the containerized example:
+```bash
+docker compose up --build
+```
+The service logs an interactive login URL unless an auth key is provided. Publish the Tailnet IP to clients via `dig @<tailscale-ip> <hostname>`.
+
+To build the image directly:
+```bash
+docker build -t tsdnsrv .
+```
+
+## Operations Notes
+- Logs emit via `log/slog` to stderr with source locations; adjust verbosity through `logLevel`.
+- `SIGHUP` triggers a hot reload of the mapping file. Errors leave the previous store active and are logged at error level.
+- On shutdown (`SIGINT`/`SIGTERM`) listeners close cleanly and the tsnet server is torn down.
+- When running without an auth key, complete the login within the provided browser link to authorize the node.
+
+## Development
+- Run unit tests:
+  ```bash
+  go test ./...
+  ```
+  If the environment restricts shared caches, prefix with `GOCACHE=$(pwd)/.gocache GOMODCACHE=$(pwd)/.gomodcache`.
+- Mapping and configuration packages have targeted tests under `internal/`. The DNS server test skips automatically when sockets cannot be opened in the current sandbox.
+
+## Acknowledgements
+Built on Tailscale's `tsnet` library and the `github.com/miekg/dns` toolkit.

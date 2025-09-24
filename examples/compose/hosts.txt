@@ -1,4 +1,0 @@
-# Sample records for Docker Compose usage
-tsnet-demo.internal 100.64.0.10 60
-database.internal 100.64.0.20
-ipv6.internal fd7a:115c:a1e0::42 120
