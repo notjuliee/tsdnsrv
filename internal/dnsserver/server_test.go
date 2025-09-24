@@ -47,10 +47,8 @@ func TestHandleDNS_ARecord(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
-	srv, err := New("127.0.0.1:0", store, logger)
-	if err != nil {
-		t.Fatalf("New returned error: %v", err)
-	}
+	srv := &Server{logger: logger}
+	srv.store.Store(store)
 
 	req := new(dns.Msg)
 	req.SetQuestion("example.internal.", dns.TypeA)
@@ -85,10 +83,8 @@ func TestHandleDNS_NXDOMAIN(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
-	srv, err := New("127.0.0.1:0", store, logger)
-	if err != nil {
-		t.Fatalf("New returned error: %v", err)
-	}
+	srv := &Server{logger: logger}
+	srv.store.Store(store)
 
 	req := new(dns.Msg)
 	req.SetQuestion("missing.internal.", dns.TypeA)
@@ -127,9 +123,22 @@ func TestServe_StartStop(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
-	srv, err := New("127.0.0.1:0", store, logger)
+
+	udpConn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("New returned error: %v", err)
+		t.Fatalf("failed to create UDP listener: %v", err)
+	}
+	defer udpConn.Close()
+
+	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to create TCP listener: %v", err)
+	}
+	defer tcpListener.Close()
+
+	srv, err := NewWithListeners(udpConn, tcpListener, store, logger)
+	if err != nil {
+		t.Fatalf("NewWithListeners returned error: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -213,10 +222,8 @@ func TestUpdateStoreSwapsRecords(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
-	srv, err := New("127.0.0.1:0", initialStore, logger)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	srv := &Server{logger: logger}
+	srv.store.Store(initialStore)
 
 	req := new(dns.Msg)
 	req.SetQuestion("example.internal.", dns.TypeA)

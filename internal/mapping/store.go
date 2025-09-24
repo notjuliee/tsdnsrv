@@ -54,6 +54,19 @@ func (s *Store) IPv6(name string) []Record {
 	return s.lookup(name).ipv6
 }
 
+// Exists returns true if the given hostname has any records defined.
+func (s *Store) Exists(name string) bool {
+	if s == nil {
+		return false
+	}
+	key, err := normalizeHostname(name)
+	if err != nil {
+		return false
+	}
+	_, ok := s.records[key]
+	return ok
+}
+
 func (s *Store) lookup(name string) entry {
 	if s == nil {
 		return entry{}
@@ -227,11 +240,10 @@ func validateLabel(label string) error {
 		if r >= '0' && r <= '9' {
 			continue
 		}
-		switch r {
-		case '-', '_':
-			// allow hyphen or underscore but not at start/end
+		if r == '-' {
+			// allow hyphen but not at start/end
 			if i == 0 || i == len(label)-1 {
-				return fmt.Errorf("label %q cannot start or end with %q", label, string(r))
+				return fmt.Errorf("label %q cannot start or end with a hyphen", label)
 			}
 			continue
 		}

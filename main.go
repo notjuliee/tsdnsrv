@@ -26,19 +26,16 @@ func main() {
 	flag.Parse()
 
 	if *configPath == "" {
-		fmt.Fprintln(os.Stderr, "missing required --config path to JSON configuration file")
-		os.Exit(2)
+		fail("missing required --config path to JSON configuration file")
 	}
 
 	if len(flag.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "unexpected positional arguments: %v\n", flag.Args())
-		os.Exit(2)
+		fail("unexpected positional arguments: %v", flag.Args())
 	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
-		os.Exit(2)
+		fail("configuration error: %v", err)
 	}
 
 	logger := newLogger(cfg.LogLevel)
@@ -69,10 +66,15 @@ func main() {
 		tsServer.Dir = cfg.StateDir
 	}
 	tsServer.Logf = func(format string, args ...any) {
-		logger.Debug(fmt.Sprintf(format, args...))
+		// tsnet logs are noisy; route them to our debug level.
+		// The format string often has a trailing newline, which we trim.
+		msg := strings.TrimSpace(fmt.Sprintf(format, args...))
+		logger.Debug(msg)
 	}
 	tsServer.UserLogf = func(format string, args ...any) {
-		logger.InfoContext(ctx, fmt.Sprintf(format, args...))
+		// UserLogf is for interactive login URLs.
+		msg := strings.TrimSpace(fmt.Sprintf(format, args...))
+		logger.InfoContext(ctx, msg)
 	}
 
 	status, err := tsServer.Up(ctx)
@@ -274,4 +276,9 @@ func logMappingMetadata(ctx context.Context, logger *slog.Logger, store *mapping
 	}
 	source, loadedAt, lines, records := store.Metadata()
 	logger.InfoContext(ctx, "mapping file loaded", slog.String("source", source), slog.Time("loaded_at", loadedAt), slog.Int("lines", lines), slog.Int("records", records))
+}
+
+func fail(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(2)
 }
