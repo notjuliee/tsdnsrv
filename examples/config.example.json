@@ -1,0 +1,9 @@
+{
+  "hostname": "tsdnsrv",
+  "stateDir": "./state",
+  "mapFile": "./hosts.example.txt",
+  "listenAddress": ":53",
+  "logLevel": "info",
+  "controlURL": "",
+  "ephemeral": false
+}

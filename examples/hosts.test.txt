@@ -1,0 +1,4 @@
+# Sample records to exercise tsdnsrv
+web.test.internal 100.64.0.42 60
+api.test.internal 100.64.0.43
+ipv6.test.internal fd7a:115c:a1e0::42
