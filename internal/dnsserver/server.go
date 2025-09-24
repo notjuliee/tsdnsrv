@@ -25,21 +25,6 @@ type Server struct {
 	tcpListener net.Listener
 }
 
-// New constructs a DNS server that serves records from the supplied mapping store.
-func New(addr string, store *mapping.Store, logger *slog.Logger) (*Server, error) {
-	if addr == "" {
-		return nil, errors.New("listen address must be provided")
-	}
-
-	srv, err := newBase(store, logger)
-	if err != nil {
-		return nil, err
-	}
-
-	srv.addr = addr
-	return srv, nil
-}
-
 // NewWithListeners constructs a DNS server configured with pre-bound UDP/TCP endpoints.
 func NewWithListeners(udpConn net.PacketConn, tcpListener net.Listener, store *mapping.Store, logger *slog.Logger) (*Server, error) {
 	if udpConn == nil {
@@ -180,89 +165,92 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	response.SetReply(r)
 	response.Authoritative = true
 
-	var answered bool
-
 	store := s.store.Load()
 	if store == nil {
+		// This shouldn't happen in normal operation, but as a fallback, treat as empty.
 		store = &mapping.Store{}
 	}
 
-	for _, q := range r.Question {
-		name := strings.TrimSuffix(strings.ToLower(q.Name), ".")
-		switch q.Qtype {
-		case dns.TypeA:
-			records := store.IPv4(name)
-			for _, rec := range records {
-				if ip := ipv4FromRecord(rec); ip != nil {
-					rr := &dns.A{
-						Hdr: dns.RR_Header{
-							Name:   dns.Fqdn(rec.Name),
-							Rrtype: dns.TypeA,
-							Class:  dns.ClassINET,
-							Ttl:    rec.TTL,
-						},
-						A: ip,
-					}
-					response.Answer = append(response.Answer, rr)
-					answered = true
-				}
-			}
-		case dns.TypeAAAA:
-			records := store.IPv6(name)
-			for _, rec := range records {
-				if ip := ipv6FromRecord(rec); ip != nil {
-					rr := &dns.AAAA{
-						Hdr: dns.RR_Header{
-							Name:   dns.Fqdn(rec.Name),
-							Rrtype: dns.TypeAAAA,
-							Class:  dns.ClassINET,
-							Ttl:    rec.TTL,
-						},
-						AAAA: ip,
-					}
-					response.Answer = append(response.Answer, rr)
-					answered = true
-				}
-			}
-		default:
-			// For unsupported types, do nothing; respond with NXDOMAIN if no answers overall.
-		}
+	if len(r.Question) == 0 {
+		response.Rcode = dns.RcodeFormatError
+		s.writeResponse(w, response, start, r.Question)
+		return
 	}
 
-	if !answered {
+	// Assume success unless we determine otherwise.
+	response.Rcode = dns.RcodeSuccess
+
+	// We only answer one question per query.
+	q := r.Question[0]
+	name := strings.TrimSuffix(strings.ToLower(q.Name), ".")
+
+	if !store.Exists(name) {
 		response.Rcode = dns.RcodeNameError
+		s.writeResponse(w, response, start, r.Question)
+		return
 	}
 
+	switch q.Qtype {
+	case dns.TypeA:
+		records := store.IPv4(name)
+		for _, rec := range records {
+			if ip := ipFromRecord(rec, false); ip != nil {
+				rr := &dns.A{
+					Hdr: dns.RR_Header{
+						Name:   dns.Fqdn(rec.Name),
+						Rrtype: dns.TypeA,
+						Class:  dns.ClassINET,
+						Ttl:    rec.TTL,
+					},
+					A: ip,
+				}
+				response.Answer = append(response.Answer, rr)
+			}
+		}
+	case dns.TypeAAAA:
+		records := store.IPv6(name)
+		for _, rec := range records {
+			if ip := ipFromRecord(rec, true); ip != nil {
+				rr := &dns.AAAA{
+					Hdr: dns.RR_Header{
+						Name:   dns.Fqdn(rec.Name),
+						Rrtype: dns.TypeAAAA,
+						Class:  dns.ClassINET,
+						Ttl:    rec.TTL,
+					},
+					AAAA: ip,
+				}
+				response.Answer = append(response.Answer, rr)
+			}
+		}
+	default:
+		// For unsupported qtypes where the name *does* exist, we return NOERROR with an empty answer.
+		// This signals that the name is valid, but the requested record type is not available.
+	}
+
+	s.writeResponse(w, response, start, r.Question)
+}
+
+func (s *Server) writeResponse(w dns.ResponseWriter, response *dns.Msg, start time.Time, questions []dns.Question) {
 	if err := w.WriteMsg(response); err != nil {
 		s.logger.Error("failed to write DNS response", slog.Any("error", err))
 	}
 
-	s.logger.Info(
+	s.logger.Debug(
 		"dns query",
 		slog.String("remote", w.RemoteAddr().String()),
-		slog.String("questions", formatQuestions(r.Question)),
+		slog.String("questions", formatQuestions(questions)),
 		slog.String("rcode", dns.RcodeToString[response.Rcode]),
 		slog.Int("answers", len(response.Answer)),
 		slog.Duration("duration", time.Since(start)),
 	)
 }
 
-func ipv4FromRecord(rec mapping.Record) net.IP {
-	addr := rec.Addr
-	if !addr.Is4() {
+func ipFromRecord(rec mapping.Record, isIPv6 bool) net.IP {
+	if !rec.Addr.IsValid() || rec.Addr.Is4() == isIPv6 {
 		return nil
 	}
-	parts := addr.As4()
-	return net.IPv4(parts[0], parts[1], parts[2], parts[3])
-}
-
-func ipv6FromRecord(rec mapping.Record) net.IP {
-	addr := rec.Addr
-	if !addr.Is6() {
-		return nil
-	}
-	parts := addr.As16()
-	return net.IP(parts[:])
+	return rec.Addr.AsSlice()
 }
 
 func formatQuestions(qs []dns.Question) string {

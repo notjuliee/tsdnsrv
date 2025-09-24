@@ -92,6 +92,10 @@ func parseConfig(data []byte) (Config, error) {
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = defaultLogLevel
 	}
+	cfg.LogLevel = strings.ToLower(cfg.LogLevel)
+	if cfg.LogLevel == "warning" {
+		cfg.LogLevel = "warn"
+	}
 
 	cfg.ListenAddr = strings.TrimSpace(fileCfg.ListenAddr)
 	if cfg.ListenAddr == "" {
@@ -108,20 +112,13 @@ func (c *Config) validate() error {
 	if c.Hostname == "" {
 		return errors.New("hostname is required")
 	}
-	if c.ListenAddr == "" {
-		return errors.New("listenAddress is required")
-	}
 
 	if c.AuthKey == "" && c.Ephemeral {
 		return errors.New("ephemeral nodes require an authKey; disable ephemeral for interactive login")
 	}
 
-	c.LogLevel = strings.ToLower(c.LogLevel)
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
-		return nil
-	case "warning":
-		c.LogLevel = "warn"
 		return nil
 	default:
 		return fmt.Errorf("unsupported log level %q", c.LogLevel)
