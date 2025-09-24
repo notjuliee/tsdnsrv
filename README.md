@@ -62,6 +62,7 @@ Each non-empty, non-comment line declares a record:
 <hostname> <ip-address> [ttl-seconds]
 ```
 - Hostnames are treated as FQDNs; a trailing dot is optional.
+- Prefix a hostname with `*.` to define a single-label wildcard (for example `*.example.com` matches `api.example.com` but not `example.com`).
 - IPv4 and IPv6 addresses are supported in any mix.
 - TTL defaults to 300 seconds when omitted.
 
@@ -70,6 +71,7 @@ Example (`examples/basic/hosts.txt`):
 # Example hostname -> IP mapping used by tsdnsrv
 web.internal 100.100.100.10 120
 app.internal 100.100.100.20
+*.apps.internal 100.100.100.30
 ipv6.internal fd7a:115c:a1e0:ab12:4843:cd96:6271:1234
 ```
 

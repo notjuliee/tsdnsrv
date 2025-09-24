@@ -4,4 +4,5 @@
 
 web.internal 100.100.100.10 120
 app.internal 100.100.100.20
+*.apps.internal 100.100.100.30
 ipv6.internal fd7a:115c:a1e0:ab12:4843:cd96:6271:1234

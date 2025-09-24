@@ -25,6 +25,7 @@ type Record struct {
 // Store is an immutable collection of parsed records keyed by hostname.
 type Store struct {
 	records     map[string]entry
+	wildcards   map[string]entry
 	source      string
 	loadedAt    time.Time
 	lineCount   int
@@ -63,7 +64,10 @@ func (s *Store) Exists(name string) bool {
 	if err != nil {
 		return false
 	}
-	_, ok := s.records[key]
+	if _, ok := s.records[key]; ok {
+		return true
+	}
+	_, ok := s.lookupWildcard(key)
 	return ok
 }
 
@@ -75,13 +79,42 @@ func (s *Store) lookup(name string) entry {
 	if err != nil {
 		return entry{}
 	}
-	rec := s.records[key]
-	out := entry{
-		ipv4: make([]Record, len(rec.ipv4)),
-		ipv6: make([]Record, len(rec.ipv6)),
+	if rec, ok := s.records[key]; ok {
+		return copyEntry(rec)
 	}
-	copy(out.ipv4, rec.ipv4)
-	copy(out.ipv6, rec.ipv6)
+	if rec, ok := s.lookupWildcard(key); ok {
+		out := copyEntry(rec)
+		for i := range out.ipv4 {
+			out.ipv4[i].Name = key
+		}
+		for i := range out.ipv6 {
+			out.ipv6[i].Name = key
+		}
+		return out
+	}
+	return entry{}
+}
+
+func (s *Store) lookupWildcard(key string) (entry, bool) {
+	if s == nil || len(s.wildcards) == 0 {
+		return entry{}, false
+	}
+	labels := strings.Split(key, ".")
+	if len(labels) < 2 {
+		return entry{}, false
+	}
+	suffix := strings.Join(labels[1:], ".")
+	rec, ok := s.wildcards[suffix]
+	return rec, ok
+}
+
+func copyEntry(src entry) entry {
+	out := entry{
+		ipv4: make([]Record, len(src.ipv4)),
+		ipv6: make([]Record, len(src.ipv6)),
+	}
+	copy(out.ipv4, src.ipv4)
+	copy(out.ipv6, src.ipv6)
 	return out
 }
 
@@ -98,6 +131,7 @@ func LoadFile(path string) (*Store, error) {
 	scanner.Buffer(buf, 1024*1024)
 
 	records := make(map[string]entry)
+	wildcards := make(map[string]entry)
 	lineNumber := 0
 	recordCount := 0
 
@@ -112,18 +146,30 @@ func LoadFile(path string) (*Store, error) {
 			continue
 		}
 
-		host, addr, ttl, err := parsed.toRecord()
+		spec, err := parsed.toRecord()
 		if err != nil {
 			return nil, fmt.Errorf("%s:%d: %w", path, lineNumber, err)
 		}
 
-		existing := records[host]
-		if addr.Is4() {
-			existing.ipv4 = append(existing.ipv4, Record{Name: host, Addr: addr, TTL: ttl})
+		rec := Record{Name: spec.host, Addr: spec.addr, TTL: spec.ttl}
+
+		if spec.wildcard {
+			existing := wildcards[spec.suffix]
+			if spec.addr.Is4() {
+				existing.ipv4 = append(existing.ipv4, rec)
+			} else {
+				existing.ipv6 = append(existing.ipv6, rec)
+			}
+			wildcards[spec.suffix] = existing
 		} else {
-			existing.ipv6 = append(existing.ipv6, Record{Name: host, Addr: addr, TTL: ttl})
+			existing := records[spec.host]
+			if spec.addr.Is4() {
+				existing.ipv4 = append(existing.ipv4, rec)
+			} else {
+				existing.ipv6 = append(existing.ipv6, rec)
+			}
+			records[spec.host] = existing
 		}
-		records[host] = existing
 		recordCount++
 	}
 
@@ -133,6 +179,7 @@ func LoadFile(path string) (*Store, error) {
 
 	store := &Store{
 		records:     records,
+		wildcards:   wildcards,
 		source:      path,
 		loadedAt:    time.Now().UTC(),
 		lineCount:   lineNumber,
@@ -145,6 +192,14 @@ type parsedLine struct {
 	hostname string
 	ip       string
 	ttl      string
+}
+
+type recordSpec struct {
+	host     string
+	addr     netip.Addr
+	ttl      uint32
+	wildcard bool
+	suffix   string
 }
 
 func parseLine(line string) (parsedLine, bool, error) {
@@ -169,27 +224,33 @@ func parseLine(line string) (parsedLine, bool, error) {
 	return result, true, nil
 }
 
-func (p parsedLine) toRecord() (string, netip.Addr, uint32, error) {
-	host, err := normalizeHostname(p.hostname)
+func (p parsedLine) toRecord() (recordSpec, error) {
+	host, wildcard, suffix, err := normalizeMappingHostname(p.hostname)
 	if err != nil {
-		return "", netip.Addr{}, 0, err
+		return recordSpec{}, err
 	}
 
 	addr, err := netip.ParseAddr(p.ip)
 	if err != nil {
-		return "", netip.Addr{}, 0, fmt.Errorf("invalid IP address %q", p.ip)
+		return recordSpec{}, fmt.Errorf("invalid IP address %q", p.ip)
 	}
 
 	ttl := uint64(defaultTTLSeconds)
 	if p.ttl != "" {
 		parsed, err := strconv.ParseUint(p.ttl, 10, 32)
 		if err != nil {
-			return "", netip.Addr{}, 0, fmt.Errorf("invalid TTL %q", p.ttl)
+			return recordSpec{}, fmt.Errorf("invalid TTL %q", p.ttl)
 		}
 		ttl = parsed
 	}
 
-	return host, addr, uint32(ttl), nil
+	return recordSpec{
+		host:     host,
+		addr:     addr,
+		ttl:      uint32(ttl),
+		wildcard: wildcard,
+		suffix:   suffix,
+	}, nil
 }
 
 func stripComment(line string) string {
@@ -197,6 +258,42 @@ func stripComment(line string) string {
 		return line[:idx]
 	}
 	return line
+}
+
+func normalizeMappingHostname(name string) (normalized string, wildcard bool, suffix string, err error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", false, "", errors.New("hostname is empty")
+	}
+
+	trimmed = strings.TrimSuffix(trimmed, ".")
+	lowered := strings.ToLower(trimmed)
+
+	if strings.HasPrefix(lowered, "*.") {
+		if strings.Count(lowered, "*") > 1 {
+			return "", false, "", errors.New("wildcard hostname may contain only one '*' label")
+		}
+		suffixPart := strings.TrimPrefix(lowered, "*.")
+		if suffixPart == "" {
+			return "", false, "", errors.New("wildcard hostname must include a suffix")
+		}
+
+		normalizedSuffix, err := normalizeHostname(suffixPart)
+		if err != nil {
+			return "", false, "", err
+		}
+		return "*." + normalizedSuffix, true, normalizedSuffix, nil
+	}
+
+	if strings.Contains(lowered, "*") {
+		return "", false, "", errors.New("wildcard '*' is only supported as the entire left-most label")
+	}
+
+	host, err := normalizeHostname(trimmed)
+	if err != nil {
+		return "", false, "", err
+	}
+	return host, false, "", nil
 }
 
 func normalizeHostname(name string) (string, error) {

@@ -70,6 +70,53 @@ func TestHandleDNS_ARecord(t *testing.T) {
 	}
 }
 
+func TestHandleDNS_WildcardARecord(t *testing.T) {
+	dir := t.TempDir()
+	mapPath := filepath.Join(dir, "hosts.txt")
+	contents := "*.internal 192.0.2.50 90\n"
+	if err := os.WriteFile(mapPath, []byte(contents), 0o600); err != nil {
+		t.Fatalf("failed to write map file: %v", err)
+	}
+
+	store, err := mapping.LoadFile(mapPath)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+	srv := &Server{logger: logger}
+	srv.store.Store(store)
+
+	req := new(dns.Msg)
+	req.SetQuestion("svc.internal.", dns.TypeA)
+
+	rec := &recorder{}
+	srv.handleDNS(rec, req)
+
+	if rec.msg == nil {
+		t.Fatalf("no response written")
+	}
+	if rec.msg.Rcode != dns.RcodeSuccess {
+		t.Fatalf("expected success rcode, got %s", dns.RcodeToString[rec.msg.Rcode])
+	}
+	if len(rec.msg.Answer) != 1 {
+		t.Fatalf("expected 1 answer, got %d", len(rec.msg.Answer))
+	}
+	a, ok := rec.msg.Answer[0].(*dns.A)
+	if !ok {
+		t.Fatalf("unexpected answer type: %#v", rec.msg.Answer[0])
+	}
+	if a.Hdr.Name != "svc.internal." {
+		t.Fatalf("answer name = %q, want svc.internal.", a.Hdr.Name)
+	}
+	if a.Hdr.Ttl != 90 {
+		t.Fatalf("answer TTL = %d, want 90", a.Hdr.Ttl)
+	}
+	if !a.A.Equal(net.IPv4(192, 0, 2, 50)) {
+		t.Fatalf("unexpected answer IP: %v", a.A)
+	}
+}
+
 func TestHandleDNS_NXDOMAIN(t *testing.T) {
 	dir := t.TempDir()
 	mapPath := filepath.Join(dir, "hosts.txt")

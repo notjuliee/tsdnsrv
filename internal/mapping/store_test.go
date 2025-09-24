@@ -62,6 +62,78 @@ example.com 192.0.2.2
 	}
 }
 
+func TestLoadFile_WildcardRecords(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wildcard.txt")
+	data := strings.TrimSpace(`
+*.example.com 192.0.2.10 180
+*.example.com 2001:db8::1
+exact.example.com 192.0.2.20 60
+`)
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatalf("failed to write temp mapping file: %v", err)
+	}
+
+	store, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile returned error: %v", err)
+	}
+
+	name := "app.example.com"
+	if !store.Exists(name) {
+		t.Fatalf("Exists(%q) = false, want true", name)
+	}
+	if store.Exists("example.com") {
+		t.Fatalf("Exists(example.com) = true, want false")
+	}
+	if store.Exists("deep.app.example.com") {
+		t.Fatalf("Exists(deep.app.example.com) = true, want false")
+	}
+
+	ipv4 := store.IPv4(name)
+	if len(ipv4) != 1 {
+		t.Fatalf("IPv4 len = %d, want 1", len(ipv4))
+	}
+	if got := ipv4[0].Name; got != name {
+		t.Fatalf("IPv4 record name = %q, want %q", got, name)
+	}
+	if ipv4[0].TTL != 180 {
+		t.Fatalf("IPv4 TTL = %d, want 180", ipv4[0].TTL)
+	}
+	if got := ipv4[0].Addr.String(); got != "192.0.2.10" {
+		t.Fatalf("IPv4 addr = %q, want 192.0.2.10", got)
+	}
+
+	ipv6 := store.IPv6(name)
+	if len(ipv6) != 1 {
+		t.Fatalf("IPv6 len = %d, want 1", len(ipv6))
+	}
+	if got := ipv6[0].Name; got != name {
+		t.Fatalf("IPv6 record name = %q, want %q", got, name)
+	}
+	if ipv6[0].TTL != defaultTTLSeconds {
+		t.Fatalf("IPv6 TTL = %d, want %d", ipv6[0].TTL, defaultTTLSeconds)
+	}
+	if got := ipv6[0].Addr.String(); got != "2001:db8::1" {
+		t.Fatalf("IPv6 addr = %q, want 2001:db8::1", got)
+	}
+
+	exactName := "exact.example.com"
+	exact := store.IPv4(exactName)
+	if len(exact) != 1 {
+		t.Fatalf("exact IPv4 len = %d, want 1", len(exact))
+	}
+	if got := exact[0].Name; got != exactName {
+		t.Fatalf("exact record name = %q, want %q", got, exactName)
+	}
+	if exact[0].TTL != 60 {
+		t.Fatalf("exact TTL = %d, want 60", exact[0].TTL)
+	}
+	if got := exact[0].Addr.String(); got != "192.0.2.20" {
+		t.Fatalf("exact addr = %q, want 192.0.2.20", got)
+	}
+}
+
 func TestLoadFile_InvalidLines(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.txt")
@@ -93,6 +165,31 @@ func TestLoadFile_InvalidHostname(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cannot start or end") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadFile_InvalidWildcard(t *testing.T) {
+	cases := []string{
+		"*example.com 192.0.2.1\n",
+		"foo*.example.com 192.0.2.1\n",
+	}
+
+	for _, data := range cases {
+		t.Run(strings.TrimSpace(data), func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "bad_wildcard.txt")
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatalf("failed to write temp mapping file: %v", err)
+			}
+
+			_, err := LoadFile(path)
+			if err == nil {
+				t.Fatalf("expected error for invalid wildcard hostname")
+			}
+			if !strings.Contains(err.Error(), "wildcard") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 
