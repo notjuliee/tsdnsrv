@@ -31,8 +31,5 @@ COPY --from=builder /out/tsdnsrv /usr/local/bin/tsdnsrv
 
 WORKDIR /app
 
-EXPOSE 53/tcp
-EXPOSE 53/udp
-
 ENTRYPOINT ["/usr/local/bin/tsdnsrv"]
 CMD ["--config=/config/server.json"]
